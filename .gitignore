@@ -7,6 +7,10 @@
 *.tar.gz
 *.log
 
+# Unignore packages inside repo/
+!repo/
+!repo/**
+
 # Editor & temporary files
 *.swp
 *.tmp
