@@ -1,0 +1,8 @@
+gnome-wallpaper-switcher (1.2.0-1) unstable; urgency=medium
+
+  * Initial Debian/Ubuntu package release.
+  * Added category filtering and persistence in config.conf.
+  * Added --install (-i) and --uninstall (-U) wallpaper management commands.
+  * Added systemd user service and bash/zsh completions.
+
+ -- lxz <lxz@localhost>  Wed, 16 Sep 2026 16:00:00 +0500

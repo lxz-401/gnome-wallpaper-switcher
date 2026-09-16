@@ -3,6 +3,8 @@
 /pkg/
 *.pkg.tar.zst
 *.pkg.tar.xz
+*.deb
+*.tar.gz
 *.log
 
 # Editor & temporary files

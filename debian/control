@@ -1,0 +1,15 @@
+Source: gnome-wallpaper-switcher
+Section: utils
+Priority: optional
+Maintainer: lxz <lxz@localhost>
+Standards-Version: 4.6.2
+Homepage: https://github.com/lxz/gnome-wallpaper-switcher
+
+Package: gnome-wallpaper-switcher
+Architecture: all
+Depends: bash (>= 4.4), libglib2.0-bin
+Recommends: libnotify-bin
+Description: Modular CLI wallpaper switcher and daemon for GNOME
+ Command-line utility and background systemd service for GNOME desktop
+ wallpaper management and automated transitions with category filtering,
+ history undo, keymap triggers, and seamless light/dark theme synchronization.

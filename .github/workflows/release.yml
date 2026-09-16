@@ -1,0 +1,41 @@
+name: Release Packages (APT & Pacman)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build .deb & .pkg.tar.zst and Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make tar xz-utils zstd binutils
+
+      - name: Build Debian Package (.deb)
+        run: |
+          make deb
+
+      - name: Build Arch Linux Package (.pkg.tar.zst)
+        uses: 2m/arch-pkgbuild-builder@v3
+        with:
+          target: pkgbuild
+          pkgbuild: ./PKGBUILD
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.deb
+            *.pkg.tar.zst
+          generate_release_notes: true
+          draft: false
+          prerelease: false

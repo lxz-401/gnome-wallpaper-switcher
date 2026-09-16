@@ -63,31 +63,63 @@ gnome-wallpaper-switcher/
 
 ## Installation
 
-### Method 1: Arch Linux Package (`makepkg`)
+### Method 1: Arch Linux (Pacman & AUR)
 
-Clone the repository and build the Arch package using `makepkg`:
-
+#### Option A: Build and install with `makepkg`
 ```bash
 git clone https://github.com/lxz/gnome-wallpaper-switcher.git
 cd gnome-wallpaper-switcher
 makepkg -si
 ```
 
-This installs:
-- Binary: `/usr/bin/gnome-wallpaper-switcher`
-- Systemd unit: `/usr/lib/systemd/user/gnome-wallpaper-switcher.service`
-- Completions: `/usr/share/bash-completion/completions/` and `/usr/share/zsh/site-functions/`
-- Documentation & Config example: `/usr/share/doc/gnome-wallpaper-switcher/`
+#### Option B: Install pre-built `.pkg.tar.zst` directly
+```bash
+sudo pacman -U gnome-wallpaper-switcher-1.2.0-1-any.pkg.tar.zst
+```
 
-### Method 2: Manual Installation (`make`)
+---
 
-You can install directly using the `Makefile`:
+### Method 2: Debian / Ubuntu / Linux Mint (APT)
+
+Download the `.deb` package from GitHub Releases or build it locally with `make deb`:
+
+```bash
+# Install with APT (automatically resolves dependencies)
+sudo apt install ./gnome-wallpaper-switcher_1.2.0-1_all.deb
+
+# Or with dpkg
+sudo dpkg -i gnome-wallpaper-switcher_1.2.0-1_all.deb
+sudo apt-get install -f
+```
+
+---
+
+### Method 3: Package Building via Makefile
+
+This project includes built-in targets to build native packages for both package managers:
+
+```bash
+# Build Debian/Ubuntu package (.deb)
+make deb
+
+# Build Arch Linux package (.pkg.tar.zst)
+make pacman
+
+# Build both packages simultaneously
+make packages
+```
+
+---
+
+### Method 4: Manual UNIX Installation (`make`)
+
+You can install directly without package managers using the `Makefile`:
 
 ```bash
 # System-wide installation (default: /usr)
 sudo make install
 
-# Or local user installation:
+# Or local user installation (no root needed):
 make install PREFIX="$HOME/.local"
 ```
 
