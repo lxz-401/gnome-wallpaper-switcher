@@ -1,9 +1,9 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: gnome-wallpaper-switcher
-Source: https://github.com/lxz/gnome-wallpaper-switcher
+Source: https://github.com/lxz-401/gnome-wallpaper-switcher
 
 Files: *
-Copyright: 2026 lxz <lxz@localhost>
+Copyright: 2026 lxz-401 <lxz-401@users.noreply.github.com>
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal

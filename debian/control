@@ -1,7 +1,7 @@
 Source: gnome-wallpaper-switcher
 Section: utils
 Priority: optional
-Maintainer: lxz-401
+Maintainer: lxz-401 <lxz-401@users.noreply.github.com>
 Standards-Version: 4.6.2
 Homepage: https://github.com/lxz-401/gnome-wallpaper-switcher
 

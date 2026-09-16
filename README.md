@@ -67,7 +67,7 @@ gnome-wallpaper-switcher/
 
 #### Option A: Build and install with `makepkg`
 ```bash
-git clone https://github.com/lxz/gnome-wallpaper-switcher.git
+git clone https://github.com/lxz-401/gnome-wallpaper-switcher.git
 cd gnome-wallpaper-switcher
 makepkg -si
 ```

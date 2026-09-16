@@ -1,6 +1,6 @@
 [Unit]
 Description=GNOME Wallpaper Switcher Daemon
-Documentation=https://github.com/lxz/gnome-wallpaper-switcher
+Documentation=https://github.com/lxz-401/gnome-wallpaper-switcher
 PartOf=graphical-session.target
 After=graphical-session.target
 
