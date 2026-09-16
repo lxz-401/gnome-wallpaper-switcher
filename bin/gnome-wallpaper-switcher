@@ -74,7 +74,7 @@ die() {
 }
 
 # ------------------------------------------------------------------------------
-# Configuration Loading
+# Configuration Loading & Persistence
 # ------------------------------------------------------------------------------
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -83,6 +83,30 @@ load_config() {
         if [[ -n "${CATEGORY:-}" ]]; then
             CONFIG_CATEGORY="$CATEGORY"
             CATEGORY=""
+        fi
+    fi
+}
+
+update_config_category() {
+    local new_cat="$1"
+    mkdir -p "$CONFIG_DIR"
+
+    # Ensure config file exists
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        local local_example="/home/lxz/.gemini/antigravity/scratch/gnome-wallpaper-switcher/config/config.conf.example"
+        local sys_example="/usr/share/doc/gnome-wallpaper-switcher/config.conf.example"
+        if [[ -f "$local_example" ]]; then
+            cp "$local_example" "$CONFIG_FILE"
+        elif [[ -f "$sys_example" ]]; then
+            cp "$sys_example" "$CONFIG_FILE"
+        fi
+    fi
+
+    if [[ -f "$CONFIG_FILE" ]]; then
+        if grep -q -E '^[[:space:]]*CATEGORY=' "$CONFIG_FILE" 2>/dev/null; then
+            sed -i -E "s|^[[:space:]]*CATEGORY=.*|CATEGORY=\"$new_cat\"|" "$CONFIG_FILE"
+        else
+            printf '\nCATEGORY="%s"\n' "$new_cat" >> "$CONFIG_FILE"
         fi
     fi
 }
@@ -103,7 +127,7 @@ ${C_BOLD}USAGE:${C_RESET}
 
 ${C_BOLD}OPTIONS:${C_RESET}
     -m, --mode <MODE>          Switching mode: 'forward', 'backward', 'random' (default: forward)
-    -c, --category <NAME>      Target specific category (persists for future switches until changed)
+    -c, --category <NAME>      Target specific category (saves to config.conf and persists)
     -a, --all                  Clear category filter and cycle across all wallpapers
     --categories               List all available categories and show the active one
     -p, --path <DIR>           Override base wallpapers directory (default: ~/Pictures/Wallpapers)
@@ -137,7 +161,6 @@ to_file_uri() {
     if command -v python3 >/dev/null 2>&1; then
         python3 -c "import urllib.parse, sys; print('file://' + urllib.parse.quote(sys.argv[1]))" "$raw_path"
     else
-        # Fallback: encode spaces
         printf "file://%s\n" "${raw_path// /%20}"
     fi
 }
@@ -186,7 +209,7 @@ get_current_wallpaper() {
 
     local raw_uri
     raw_uri=$(gsettings get org.gnome.desktop.background picture-uri-dark 2>/dev/null || true)
-    if [[ -z "$raw_uri" || "$raw_uri" == "''" ]]; then
+    if [[ -z "$raw_uri" || "$raw_uri" == "''" || "$raw_uri" == "@ms "* ]]; then
         raw_uri=$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null || true)
     fi
 
@@ -290,7 +313,8 @@ resolve_active_category() {
         if [[ "$CATEGORY" == "all" || "$CATEGORY" == "none" || "$CATEGORY" == "clear" || "$CATEGORY" == "reset" || -z "$CATEGORY" ]]; then
             CATEGORY=""
             printf 'ALL\n' > "$CATEGORY_FILE"
-            log_info "Category filter cleared. Switching across all wallpapers."
+            update_config_category ""
+            log_info "Category filter cleared. Saved to config.conf (CATEGORY=\"\")"
         else
             if [[ ! -d "$WALLPAPERS_DIR/$CATEGORY" ]]; then
                 local available
@@ -298,29 +322,32 @@ resolve_active_category() {
                 die "Category '$CATEGORY' does not exist in $WALLPAPERS_DIR.\nAvailable categories: ${available:-none}"
             fi
             printf '%s\n' "$CATEGORY" > "$CATEGORY_FILE"
-            log_info "Active category set to: ${C_BOLD}$CATEGORY${C_RESET}"
+            update_config_category "$CATEGORY"
+            log_info "Active category set to: ${C_BOLD}$CATEGORY${C_RESET} (saved in config.conf)"
         fi
     else
-        # Not explicitly passed in this command invocation: check persisted state
-        local saved_cat=""
-        if [[ -f "$CATEGORY_FILE" ]]; then
-            saved_cat="$(head -n 1 "$CATEGORY_FILE" 2>/dev/null | tr -d '[:space:]')"
+        # Not explicitly passed in this CLI call: check config.conf first
+        if [[ -f "$CONFIG_FILE" ]]; then
+            local cfg_cat
+            cfg_cat=$(grep -E '^[[:space:]]*CATEGORY=' "$CONFIG_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+            if [[ -n "$cfg_cat" && -d "$WALLPAPERS_DIR/$cfg_cat" ]]; then
+                CATEGORY="$cfg_cat"
+            fi
         fi
 
-        if [[ "$saved_cat" == "ALL" ]]; then
-            CATEGORY=""
-        elif [[ -n "$saved_cat" ]]; then
-            if [[ -d "$WALLPAPERS_DIR/$saved_cat" ]]; then
-                CATEGORY="$saved_cat"
-            else
-                log_warn "Previously saved category '$saved_cat' no longer exists. Reverting to all wallpapers."
-                printf 'ALL\n' > "$CATEGORY_FILE"
+        # Check cached state
+        if [[ -z "$CATEGORY" && -f "$CATEGORY_FILE" ]]; then
+            local saved_cat
+            saved_cat="$(head -n 1 "$CATEGORY_FILE" 2>/dev/null | tr -d '[:space:]')"
+            if [[ "$saved_cat" == "ALL" ]]; then
                 CATEGORY=""
+            elif [[ -n "$saved_cat" && -d "$WALLPAPERS_DIR/$saved_cat" ]]; then
+                CATEGORY="$saved_cat"
             fi
-        elif [[ -n "$CONFIG_CATEGORY" && -d "$WALLPAPERS_DIR/$CONFIG_CATEGORY" ]]; then
-            CATEGORY="$CONFIG_CATEGORY"
-        else
-            # Auto-detect from currently active wallpaper
+        fi
+
+        # Auto-detect from currently active wallpaper if still empty
+        if [[ -z "$CATEGORY" ]]; then
             local current_wp
             current_wp="$(get_current_wallpaper)"
             local auto_cat
@@ -328,6 +355,7 @@ resolve_active_category() {
             if [[ -n "$auto_cat" && -d "$WALLPAPERS_DIR/$auto_cat" ]]; then
                 CATEGORY="$auto_cat"
                 printf '%s\n' "$CATEGORY" > "$CATEGORY_FILE"
+                update_config_category "$CATEGORY"
             fi
         fi
     fi
@@ -339,12 +367,8 @@ list_categories() {
     log_info "Available categories in ${WALLPAPERS_DIR}:"
 
     local current_active="$CATEGORY"
-    if [[ -z "$current_active" && -f "$CATEGORY_FILE" ]]; then
-        local saved
-        saved="$(head -n 1 "$CATEGORY_FILE" 2>/dev/null | tr -d '[:space:]')"
-        if [[ "$saved" != "ALL" ]]; then
-            current_active="$saved"
-        fi
+    if [[ -z "$current_active" && -f "$CONFIG_FILE" ]]; then
+        current_active=$(grep -E '^[[:space:]]*CATEGORY=' "$CONFIG_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
     fi
 
     for cat in "${cats[@]}"; do
@@ -434,9 +458,16 @@ change_wallpaper() {
     local current_path
     current_path="$(get_current_wallpaper)"
 
+    local norm_current=""
+    if [[ -n "$current_path" ]]; then
+        norm_current="$(realpath "$current_path" 2>/dev/null || echo "$current_path")"
+    fi
+
     local current_index=-1
     for i in "${!wallpapers[@]}"; do
-        if [[ "${wallpapers[$i]}" == "$current_path" ]]; then
+        local norm_wp
+        norm_wp="$(realpath "${wallpapers[$i]}" 2>/dev/null || echo "${wallpapers[$i]}")"
+        if [[ "$norm_wp" == "$norm_current" ]]; then
             current_index=$i
             break
         fi
