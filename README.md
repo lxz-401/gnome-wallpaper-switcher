@@ -17,12 +17,15 @@ A modular, lightweight, and robust CLI utility and background service for deskto
   - Instantly reverts to the previous wallpaper and verifies file integrity before applying.
 - **Subdirectory Categorization (`-c, --category`, `--categories`, `-a, --all`):**
   - Scope transitions to specific subfolders inside your wallpapers collection (e.g., `anime`, `dark`, `cyber`, `default`).
-  - **State Persistence**: Selecting a category with `-c <name>` is remembered across runs and daemon loops.
+  - **State Persistence**: Selecting a category with `-c <name>` is remembered across runs and daemon loops, directly written to `config.conf`.
   - `--categories`: List all available categories, image counts, and identify the currently active one.
   - `-a, --all`: Clear category filtering and cycle through all folders.
+- **Install & Uninstall Management (`-i, --install`, `-U, --uninstall`):**
+  - `-i, --install [-c <category>] <file...>`: Copy and import new wallpaper image(s) into your library (and target category), immediately applying the image as active.
+  - `-U, --uninstall [file...]`: Safely delete wallpaper(s) from your collection. When run without arguments, uninstalls the currently active wallpaper and smoothly switches to the next one.
 - **Dynamic Path Override (`-p, --path`):**
   - Override the default wallpapers folder on the fly.
-- **Background Daemon (`-d, --daemon`, `-i, --interval`):**
+- **Background Daemon (`-d, --daemon`, `-t, --interval`):**
   - Automated continuous cycling at configurable minute intervals.
   - Signal-aware: listens for `SIGUSR1` (instant wallpaper switch), `SIGHUP` (config reload), and `SIGTERM`/`SIGINT` (clean exit).
 - **Desktop Notifications (`-n, --notify`):**

@@ -32,10 +32,12 @@ _gnome_wallpaper_switcher() {
         '(-c --category)'{-c,--category}'[Target a specific wallpaper category]:category:($categories)' \
         '(-a --all)'{-a,--all}'[Clear category filter and cycle across all wallpapers]' \
         '--categories[List all available categories and show active status]' \
+        '(-i --install)'{-i,--install}'[Install and apply image file into category]:image file:_files' \
+        '(-U --uninstall --remove)'{-U,--uninstall,--remove}'[Delete image file from category]:image file:_files' \
         '(-p --path)'{-p,--path}'[Override base wallpapers directory]:directory:_files -/' \
         '(-u --undo)'{-u,--undo}'[Roll back to the previous wallpaper in history]' \
         '(-d --daemon)'{-d,--daemon}'[Run in background as continuous daemon service]' \
-        '(-i --interval)'{-i,--interval}'[Interval in minutes for daemon mode]:interval (minutes):(5 10 15 30 60 120)' \
+        '(-t --interval)'{-t,--interval}'[Interval in minutes for daemon mode]:interval (minutes):(5 10 15 30 60 120)' \
         '(-s --current)'{-s,--current}'[Print path of currently active wallpaper]' \
         '(-l --list)'{-l,--list}'[List discovered wallpapers in target directory]' \
         '(-n --notify)'{-n,--notify}'[Send desktop notification on transition]' \

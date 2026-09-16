@@ -1,7 +1,7 @@
 # Maintainer: lxz <lxz@localhost>
 
 pkgname=gnome-wallpaper-switcher
-pkgver=1.1.0
+pkgver=1.2.0
 pkgrel=1
 pkgdesc="Modular CLI wallpaper switcher and daemon for GNOME on Arch Linux"
 arch=('any')

@@ -9,7 +9,7 @@
 set -eo pipefail
 
 readonly PROGRAM_NAME="gnome-wallpaper-switcher"
-readonly VERSION="1.1.0"
+readonly VERSION="1.2.0"
 
 # ------------------------------------------------------------------------------
 # Default Paths & Configuration
@@ -28,7 +28,8 @@ CONFIG_CATEGORY=""
 CLI_CATEGORY_PASSED=false
 INTERVAL=15
 NOTIFY=false
-ACTION="switch" # switch, undo, daemon, current, list, categories
+ACTION="switch" # switch, undo, daemon, current, list, categories, install, uninstall
+declare -a TARGET_FILES=()
 
 # Terminal color formatting
 if [[ -t 1 ]]; then
@@ -123,17 +124,19 @@ show_help() {
 ${C_BOLD}${PROGRAM_NAME}${C_RESET} - Modular GNOME Desktop Wallpaper Switcher (v${VERSION})
 
 ${C_BOLD}USAGE:${C_RESET}
-    ${PROGRAM_NAME} [OPTIONS]
+    ${PROGRAM_NAME} [OPTIONS] [FILES...]
 
 ${C_BOLD}OPTIONS:${C_RESET}
     -m, --mode <MODE>          Switching mode: 'forward', 'backward', 'random' (default: forward)
     -c, --category <NAME>      Target specific category (saves to config.conf and persists)
     -a, --all                  Clear category filter and cycle across all wallpapers
     --categories               List all available categories and show the active one
+    -i, --install <FILE...>    Install/copy image file(s) into category and apply as active
+    -U, --uninstall [FILE...]  Delete image file(s) from category (defaults to current wallpaper)
     -p, --path <DIR>           Override base wallpapers directory (default: ~/Pictures/Wallpapers)
     -u, --undo                 Restore the previous wallpaper from history
     -d, --daemon               Run in the background as a continuous cycling service
-    -i, --interval <MINUTES>   Cycle interval in minutes for daemon mode (default: 15)
+    -t, --interval <MINUTES>   Cycle interval in minutes for daemon mode (default: 15)
     -s, --current              Print path of currently active wallpaper and category
     -l, --list                 List discovered wallpapers in the active target folder
     -n, --notify               Send a desktop notification on wallpaper transition
@@ -316,7 +319,8 @@ resolve_active_category() {
             update_config_category ""
             log_info "Category filter cleared. Saved to config.conf (CATEGORY=\"\")"
         else
-            if [[ ! -d "$WALLPAPERS_DIR/$CATEGORY" ]]; then
+            # If category directory does not exist, check if we are installing
+            if [[ ! -d "$WALLPAPERS_DIR/$CATEGORY" && "$ACTION" != "install" ]]; then
                 local available
                 available="$(get_available_categories | tr '\n' ' ')"
                 die "Category '$CATEGORY' does not exist in $WALLPAPERS_DIR.\nAvailable categories: ${available:-none}"
@@ -406,6 +410,131 @@ list_categories() {
     else
         printf "  • all (%s total across all folders)\n" "$total_count"
     fi
+}
+
+# ------------------------------------------------------------------------------
+# Install & Uninstall Handlers
+# ------------------------------------------------------------------------------
+install_wallpapers() {
+    local -a files=("$@")
+    if [[ ${#files[@]} -eq 0 ]]; then
+        die "No files specified to install.\nUsage: gnome-wallpaper-switcher -i [-c category] <image.png|jpg...>"
+    fi
+
+    local target_dir="$WALLPAPERS_DIR"
+    if [[ -n "$CATEGORY" ]]; then
+        target_dir="$WALLPAPERS_DIR/$CATEGORY"
+    fi
+    mkdir -p "$target_dir"
+
+    local last_installed=""
+    for src in "${files[@]}"; do
+        if [[ ! -f "$src" ]]; then
+            die "Source image not found: '$src'"
+        fi
+
+        local ext="${src##*.}"
+        ext="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
+        if [[ ! "$ext" =~ ^(jpg|jpeg|png|webp|jxl|svg|bmp)$ ]]; then
+            die "Unsupported image format '.$ext' for file: '$src'.\nSupported formats: .jpg, .jpeg, .png, .webp, .jxl, .svg, .bmp"
+        fi
+
+        local fname
+        fname="$(basename "$src")"
+        local dest="$target_dir/$fname"
+
+        local real_src real_dest
+        real_src="$(realpath "$src" 2>/dev/null || echo "$src")"
+        real_dest="$(realpath "$dest" 2>/dev/null || echo "$dest")"
+
+        if [[ "$real_src" != "$real_dest" ]]; then
+            cp "$real_src" "$dest"
+            log_success "Installed: $fname -> ${target_dir#$HOME/}"
+        else
+            log_info "Image already in destination folder: $fname"
+        fi
+        last_installed="$dest"
+    done
+
+    if [[ -n "$last_installed" && -f "$last_installed" ]]; then
+        apply_wallpaper "$last_installed"
+        record_history "$last_installed"
+        send_notification "$last_installed"
+        log_success "Set as active wallpaper: $last_installed"
+    fi
+}
+
+uninstall_wallpapers() {
+    local -a files=("$@")
+    local current_wp
+    current_wp="$(get_current_wallpaper)"
+    local norm_current=""
+    if [[ -n "$current_wp" ]]; then
+        norm_current="$(realpath "$current_wp" 2>/dev/null || echo "$current_wp")"
+    fi
+
+    # If no files specified, uninstall the currently active wallpaper
+    if [[ ${#files[@]} -eq 0 ]]; then
+        if [[ -z "$norm_current" || ! -f "$norm_current" ]]; then
+            die "No active wallpaper found to uninstall."
+        fi
+        files=("$norm_current")
+    fi
+
+    local target_dir
+    target_dir="$(resolve_target_dir)"
+
+    for target in "${files[@]}"; do
+        local file_to_delete=""
+
+        if [[ -f "$target" ]]; then
+            file_to_delete="$(realpath "$target" 2>/dev/null || echo "$target")"
+        elif [[ -f "$target_dir/$target" ]]; then
+            file_to_delete="$(realpath "$target_dir/$target" 2>/dev/null || echo "$target_dir/$target")"
+        elif [[ -f "$WALLPAPERS_DIR/$target" ]]; then
+            file_to_delete="$(realpath "$WALLPAPERS_DIR/$target" 2>/dev/null || echo "$WALLPAPERS_DIR/$target")"
+        else
+            local found
+            found="$(find "$WALLPAPERS_DIR" -maxdepth 2 -name "$target" -print -quit 2>/dev/null || true)"
+            if [[ -n "$found" && -f "$found" ]]; then
+                file_to_delete="$(realpath "$found" 2>/dev/null || echo "$found")"
+            fi
+        fi
+
+        if [[ -z "$file_to_delete" || ! -f "$file_to_delete" ]]; then
+            log_warn "Wallpaper file not found: '$target'"
+            continue
+        fi
+
+        # If file to delete is currently active, switch away to next wallpaper first
+        if [[ "$file_to_delete" == "$norm_current" ]]; then
+            log_info "Switching to next wallpaper before deleting active one..."
+            local total_wps
+            total_wps=$(find "$target_dir" -type f \( \
+                -iname "*.jpg"  -o \
+                -iname "*.jpeg" -o \
+                -iname "*.png"  -o \
+                -iname "*.webp" -o \
+                -iname "*.jxl"  -o \
+                -iname "*.svg"  -o \
+                -iname "*.bmp" \
+            \) 2>/dev/null | wc -l)
+
+            if (( total_wps > 1 )); then
+                change_wallpaper || true
+                norm_current="$(realpath "$(get_current_wallpaper)" 2>/dev/null || true)"
+            fi
+        fi
+
+        # Clean from history
+        if [[ -f "$HISTORY_FILE" ]]; then
+            sed -i "\|$file_to_delete|d" "$HISTORY_FILE" 2>/dev/null || true
+        fi
+
+        # Delete the file
+        rm -f "$file_to_delete"
+        log_success "Uninstalled wallpaper: $file_to_delete"
+    done
 }
 
 # ------------------------------------------------------------------------------
@@ -599,6 +728,20 @@ parse_args() {
                 show_version
                 exit 0
                 ;;
+            -i|--install)
+                # Disambiguate between daemon -i <interval> and -i/--install <file>
+                if [[ "$1" == "-i" && -n "${2:-}" && "$2" =~ ^[1-9][0-9]*$ && "$ACTION" != "install" ]]; then
+                    INTERVAL="$2"
+                    shift 2
+                else
+                    ACTION="install"
+                    shift
+                fi
+                ;;
+            -U|--uninstall|--remove)
+                ACTION="uninstall"
+                shift
+                ;;
             -s|--current)
                 ACTION="current"
                 shift
@@ -621,6 +764,15 @@ parse_args() {
                 ;;
             -n|--notify)
                 NOTIFY="true"
+                shift
+                ;;
+            -t|--interval)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a numeric interval in minutes."
+                INTERVAL="$2"
+                shift 2
+                ;;
+            --interval=*)
+                INTERVAL="${1#*=}"
                 shift
                 ;;
             -p|--path)
@@ -657,15 +809,6 @@ parse_args() {
                 MODE="${1#*=}"
                 shift
                 ;;
-            -i|--interval)
-                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a numeric interval in minutes."
-                INTERVAL="$2"
-                shift 2
-                ;;
-            --interval=*)
-                INTERVAL="${1#*=}"
-                shift
-                ;;
             --config)
                 [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a config file path."
                 CONFIG_FILE="$2"
@@ -677,10 +820,18 @@ parse_args() {
                 ;;
             --)
                 shift
+                while [[ $# -gt 0 ]]; do
+                    TARGET_FILES+=("$1")
+                    shift
+                done
                 break
                 ;;
-            *)
+            -*)
                 die "Unknown option: $1. Use --help to view available options."
+                ;;
+            *)
+                TARGET_FILES+=("$1")
+                shift
                 ;;
         esac
     done
@@ -730,6 +881,12 @@ main() {
             for wp in "${wallpapers[@]}"; do
                 printf "  • %s\n" "$wp"
             done
+            ;;
+        install)
+            install_wallpapers "${TARGET_FILES[@]}"
+            ;;
+        uninstall)
+            uninstall_wallpapers "${TARGET_FILES[@]}"
             ;;
         undo)
             undo_wallpaper

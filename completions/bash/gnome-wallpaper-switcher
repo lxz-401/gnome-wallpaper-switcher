@@ -6,9 +6,13 @@ _gnome_wallpaper_switcher() {
     local cur prev words cword
     _init_completion || return
 
-    local opts="-m --mode -c --category -a --all --categories -p --path -u --undo -d --daemon -i --interval -s --current -l --list -n --notify --config -h --help -v --version"
+    local opts="-m --mode -c --category -a --all --categories -i --install -U --uninstall -p --path -u --undo -d --daemon -t --interval -s --current -l --list -n --notify --config -h --help -v --version"
 
     case "$prev" in
+        -i|--install|-U|--uninstall|--remove)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
         -m|--mode)
             COMPREPLY=( $(compgen -W "forward backward random" -- "$cur") )
             return 0
