@@ -77,6 +77,16 @@ makepkg -si
 sudo pacman -U gnome-wallpaper-switcher-1.2.0-1-any.pkg.tar.zst
 ```
 
+#### Option C: Online Pacman Repository (`sudo pacman -S`)
+Add the repository to your `/etc/pacman.conf`:
+```bash
+sudo sh -c 'echo -e "\n[lxz-repo]\nSigLevel = Optional TrustAll\nServer = https://raw.githubusercontent.com/lxz-401/gnome-wallpaper-switcher/main/repo/\$arch" >> /etc/pacman.conf'
+```
+Then install natively:
+```bash
+sudo pacman -Sy gnome-wallpaper-switcher
+```
+
 ---
 
 ### Method 2: Debian / Ubuntu / Linux Mint (APT)
