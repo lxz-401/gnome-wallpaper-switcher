@@ -1,5 +1,10 @@
 # GNOME Wallpaper Switcher
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/lxz-401/gnome-wallpaper-switcher?color=blue)](https://github.com/lxz-401/gnome-wallpaper-switcher/releases)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-F16061?logo=ko-fi&logoColor=white)](https://ko-fi.com/lxz_401)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/lxz_401)
+
 A modular, lightweight, and robust CLI utility and background service for desktop wallpaper management and automated transitions on Arch Linux running the GNOME Desktop Environment.
 
 `gnome-wallpaper-switcher` interfaces directly with GNOME's GSettings schema (`org.gnome.desktop.background picture-uri` and `picture-uri-dark`), providing seamless transitions across both light and dark system appearances. It supports on-demand manual triggers (perfect for keyboard shortcuts) and background automation via systemd user units.
@@ -267,6 +272,15 @@ Bind quick switcher actions to global hotkeys in GNOME:
 - `.jxl`
 - `.svg`
 - `.bmp`
+
+---
+
+## 💖 Support & Donations
+
+If you find `gnome-wallpaper-switcher` useful and want to support its active development, maintenance, and future features, consider buying me a coffee or supporting on Ko-fi! Any contribution is deeply appreciated.
+
+[![Support on Ko-fi](https://img.shields.io/badge/Support%20on%20Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/lxz_401)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/lxz_401)
 
 ---
 
