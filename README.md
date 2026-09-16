@@ -15,8 +15,11 @@ A modular, lightweight, and robust CLI utility and background service for deskto
 - **Undo History (`-u, --undo`):**
   - Maintains a rolling history of the last 50 set wallpapers in `~/.cache/gnome-wallpaper-switcher/history`.
   - Instantly reverts to the previous wallpaper and verifies file integrity before applying.
-- **Subdirectory Categorization (`-c, --category`):**
-  - Scope transitions to specific subfolders inside your wallpapers collection (e.g., `anime`, `minimal`, `nature`, `dark`).
+- **Subdirectory Categorization (`-c, --category`, `--categories`, `-a, --all`):**
+  - Scope transitions to specific subfolders inside your wallpapers collection (e.g., `anime`, `dark`, `cyber`, `default`).
+  - **State Persistence**: Selecting a category with `-c <name>` is remembered across runs and daemon loops.
+  - `--categories`: List all available categories, image counts, and identify the currently active one.
+  - `-a, --all`: Clear category filtering and cycle through all folders.
 - **Dynamic Path Override (`-p, --path`):**
   - Override the default wallpapers folder on the fly.
 - **Background Daemon (`-d, --daemon`, `-i, --interval`):**

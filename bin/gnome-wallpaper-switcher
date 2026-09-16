@@ -9,7 +9,7 @@
 set -eo pipefail
 
 readonly PROGRAM_NAME="gnome-wallpaper-switcher"
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.0"
 
 # ------------------------------------------------------------------------------
 # Default Paths & Configuration
@@ -18,14 +18,17 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gnome-wallpaper-switcher"
 CONFIG_FILE="$CONFIG_DIR/config.conf"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-wallpaper-switcher"
 HISTORY_FILE="$CACHE_DIR/history"
+CATEGORY_FILE="$CACHE_DIR/current_category"
 
 # Configurable defaults
 WALLPAPERS_DIR="$HOME/Pictures/Wallpapers"
 MODE="forward"
 CATEGORY=""
+CONFIG_CATEGORY=""
+CLI_CATEGORY_PASSED=false
 INTERVAL=15
 NOTIFY=false
-ACTION="switch" # switch, undo, daemon, current, list
+ACTION="switch" # switch, undo, daemon, current, list, categories
 
 # Terminal color formatting
 if [[ -t 1 ]]; then
@@ -77,6 +80,10 @@ load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
         # shellcheck disable=SC1090
         source "$CONFIG_FILE"
+        if [[ -n "${CATEGORY:-}" ]]; then
+            CONFIG_CATEGORY="$CATEGORY"
+            CATEGORY=""
+        fi
     fi
 }
 
@@ -96,21 +103,24 @@ ${C_BOLD}USAGE:${C_RESET}
 
 ${C_BOLD}OPTIONS:${C_RESET}
     -m, --mode <MODE>          Switching mode: 'forward', 'backward', 'random' (default: forward)
-    -c, --category <NAME>      Target a specific subfolder inside the wallpapers directory
+    -c, --category <NAME>      Target specific category (persists for future switches until changed)
+    -a, --all                  Clear category filter and cycle across all wallpapers
+    --categories               List all available categories and show the active one
     -p, --path <DIR>           Override base wallpapers directory (default: ~/Pictures/Wallpapers)
     -u, --undo                 Restore the previous wallpaper from history
     -d, --daemon               Run in the background as a continuous cycling service
     -i, --interval <MINUTES>   Cycle interval in minutes for daemon mode (default: 15)
-    -s, --current              Print path of currently active wallpaper
-    -l, --list                 List discovered wallpapers in target folder
+    -s, --current              Print path of currently active wallpaper and category
+    -l, --list                 List discovered wallpapers in the active target folder
     -n, --notify               Send a desktop notification on wallpaper transition
     --config <FILE>            Use custom configuration file
     -h, --help                 Display this help message and exit
     -v, --version              Show version information
 
 ${C_BOLD}CONFIGURATION & CACHE:${C_RESET}
-    Config file:   ${CONFIG_FILE}
-    History cache: ${HISTORY_FILE}
+    Config file:     ${CONFIG_FILE}
+    History cache:   ${HISTORY_FILE}
+    Category cache:  ${CATEGORY_FILE}
 
 ${C_BOLD}SIGNALS (Daemon Mode):${C_RESET}
     SIGUSR1: Force immediate transition to the next wallpaper
@@ -134,7 +144,6 @@ to_file_uri() {
 
 from_file_uri() {
     local raw_uri="$1"
-    # Remove surrounding quotes and file:// prefix
     raw_uri="${raw_uri#\'}"
     raw_uri="${raw_uri%\'}"
     raw_uri="${raw_uri#file://}"
@@ -155,10 +164,14 @@ send_notification() {
     if [[ "$NOTIFY" == "true" ]] && command -v notify-send >/dev/null 2>&1; then
         local name
         name="$(basename "$wp_path")"
+        local title="Wallpaper Changed"
+        if [[ -n "$CATEGORY" ]]; then
+            title="Wallpaper Changed [${CATEGORY}]"
+        fi
         notify-send \
             --app-name="GNOME Wallpaper Switcher" \
             --icon="$wp_path" \
-            "Wallpaper Changed" \
+            "$title" \
             "$name" 2>/dev/null || true
     fi
 }
@@ -211,7 +224,7 @@ record_history() {
 
     printf '%s\n' "$wp" >> "$HISTORY_FILE"
 
-    # Maintain a rolling window of 50 items
+    # Maintain rolling window of 50 items
     if [[ -f "$HISTORY_FILE" ]]; then
         tail -n 50 "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
     fi
@@ -228,11 +241,9 @@ undo_wallpaper() {
         die "History is empty or has only one entry. No previous wallpaper to restore."
     fi
 
-    # Retrieve second to last wallpaper
     local prev_wp
     prev_wp=$(tail -n 2 "$HISTORY_FILE" | head -n 1)
 
-    # Pop the last entry
     sed -i '$d' "$HISTORY_FILE"
 
     if [[ ! -f "$prev_wp" ]]; then
@@ -242,6 +253,135 @@ undo_wallpaper() {
     apply_wallpaper "$prev_wp"
     send_notification "$prev_wp"
     log_success "Rolled back to: $prev_wp"
+}
+
+# ------------------------------------------------------------------------------
+# Category Management & Persistence
+# ------------------------------------------------------------------------------
+get_available_categories() {
+    if [[ -d "$WALLPAPERS_DIR" ]]; then
+        find "$WALLPAPERS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V
+    fi
+}
+
+detect_current_category() {
+    local current_wp="$1"
+    if [[ -z "$current_wp" || ! -f "$current_wp" ]]; then
+        return 0
+    fi
+    local parent_dir
+    parent_dir="$(dirname "$current_wp")"
+    local base_wallpapers_dir
+    base_wallpapers_dir="$(realpath "$WALLPAPERS_DIR" 2>/dev/null || echo "$WALLPAPERS_DIR")"
+    local real_parent
+    real_parent="$(realpath "$parent_dir" 2>/dev/null || echo "$parent_dir")"
+
+    if [[ "$real_parent" != "$base_wallpapers_dir" && "$real_parent" == "$base_wallpapers_dir"/* ]]; then
+        local rel_path="${real_parent#$base_wallpapers_dir/}"
+        local cat="${rel_path%%/*}"
+        printf "%s" "$cat"
+    fi
+}
+
+resolve_active_category() {
+    mkdir -p "$CACHE_DIR"
+
+    if [[ "$CLI_CATEGORY_PASSED" == "true" ]]; then
+        if [[ "$CATEGORY" == "all" || "$CATEGORY" == "none" || "$CATEGORY" == "clear" || "$CATEGORY" == "reset" || -z "$CATEGORY" ]]; then
+            CATEGORY=""
+            printf 'ALL\n' > "$CATEGORY_FILE"
+            log_info "Category filter cleared. Switching across all wallpapers."
+        else
+            if [[ ! -d "$WALLPAPERS_DIR/$CATEGORY" ]]; then
+                local available
+                available="$(get_available_categories | tr '\n' ' ')"
+                die "Category '$CATEGORY' does not exist in $WALLPAPERS_DIR.\nAvailable categories: ${available:-none}"
+            fi
+            printf '%s\n' "$CATEGORY" > "$CATEGORY_FILE"
+            log_info "Active category set to: ${C_BOLD}$CATEGORY${C_RESET}"
+        fi
+    else
+        # Not explicitly passed in this command invocation: check persisted state
+        local saved_cat=""
+        if [[ -f "$CATEGORY_FILE" ]]; then
+            saved_cat="$(head -n 1 "$CATEGORY_FILE" 2>/dev/null | tr -d '[:space:]')"
+        fi
+
+        if [[ "$saved_cat" == "ALL" ]]; then
+            CATEGORY=""
+        elif [[ -n "$saved_cat" ]]; then
+            if [[ -d "$WALLPAPERS_DIR/$saved_cat" ]]; then
+                CATEGORY="$saved_cat"
+            else
+                log_warn "Previously saved category '$saved_cat' no longer exists. Reverting to all wallpapers."
+                printf 'ALL\n' > "$CATEGORY_FILE"
+                CATEGORY=""
+            fi
+        elif [[ -n "$CONFIG_CATEGORY" && -d "$WALLPAPERS_DIR/$CONFIG_CATEGORY" ]]; then
+            CATEGORY="$CONFIG_CATEGORY"
+        else
+            # Auto-detect from currently active wallpaper
+            local current_wp
+            current_wp="$(get_current_wallpaper)"
+            local auto_cat
+            auto_cat="$(detect_current_category "$current_wp")"
+            if [[ -n "$auto_cat" && -d "$WALLPAPERS_DIR/$auto_cat" ]]; then
+                CATEGORY="$auto_cat"
+                printf '%s\n' "$CATEGORY" > "$CATEGORY_FILE"
+            fi
+        fi
+    fi
+}
+
+list_categories() {
+    local -a cats=()
+    readarray -t cats < <(get_available_categories)
+    log_info "Available categories in ${WALLPAPERS_DIR}:"
+
+    local current_active="$CATEGORY"
+    if [[ -z "$current_active" && -f "$CATEGORY_FILE" ]]; then
+        local saved
+        saved="$(head -n 1 "$CATEGORY_FILE" 2>/dev/null | tr -d '[:space:]')"
+        if [[ "$saved" != "ALL" ]]; then
+            current_active="$saved"
+        fi
+    fi
+
+    for cat in "${cats[@]}"; do
+        local count
+        count=$(find "$WALLPAPERS_DIR/$cat" -type f \( \
+            -iname "*.jpg"  -o \
+            -iname "*.jpeg" -o \
+            -iname "*.png"  -o \
+            -iname "*.webp" -o \
+            -iname "*.jxl"  -o \
+            -iname "*.svg"  -o \
+            -iname "*.bmp" \
+        \) 2>/dev/null | wc -l)
+
+        if [[ -n "$current_active" && "$cat" == "$current_active" ]]; then
+            printf "  ${C_GREEN}• %s${C_RESET} (%s wallpapers) ${C_BOLD}[ACTIVE]${C_RESET}\n" "$cat" "$count"
+        else
+            printf "  • %s (%s wallpapers)\n" "$cat" "$count"
+        fi
+    done
+
+    local total_count
+    total_count=$(find "$WALLPAPERS_DIR" -type f \( \
+        -iname "*.jpg"  -o \
+        -iname "*.jpeg" -o \
+        -iname "*.png"  -o \
+        -iname "*.webp" -o \
+        -iname "*.jxl"  -o \
+        -iname "*.svg"  -o \
+        -iname "*.bmp" \
+    \) 2>/dev/null | wc -l)
+
+    if [[ -z "$current_active" ]]; then
+        printf "  ${C_GREEN}• all${C_RESET} (%s total across all folders) ${C_BOLD}[ACTIVE]${C_RESET}\n" "$total_count"
+    else
+        printf "  • all (%s total across all folders)\n" "$total_count"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -338,7 +478,15 @@ change_wallpaper() {
     apply_wallpaper "$next_wp"
     record_history "$next_wp"
     send_notification "$next_wp"
-    log_success "Set: $next_wp"
+
+    local cat_label=""
+    if [[ -n "$CATEGORY" ]]; then
+        cat_label=" ${C_CYAN}[Category: $CATEGORY]${C_RESET}"
+    else
+        cat_label=" ${C_CYAN}[Category: all]${C_RESET}"
+    fi
+
+    log_success "Set: $next_wp$cat_label"
 }
 
 # ------------------------------------------------------------------------------
@@ -348,18 +496,16 @@ run_daemon() {
     local target_dir
     target_dir="$(resolve_target_dir)"
     log_info "Starting daemon loop"
-    log_info "Directory: $target_dir | Category: ${CATEGORY:-none} | Interval: ${INTERVAL}m | Mode: $MODE"
+    log_info "Directory: $target_dir | Category: ${CATEGORY:-all} | Interval: ${INTERVAL}m | Mode: $MODE"
 
     local running=1
     local reload=0
     local force_switch=0
 
-    # Trap signals cleanly
     trap 'running=0' SIGINT SIGTERM
     trap 'reload=1' SIGHUP
     trap 'force_switch=1' SIGUSR1
 
-    # Temporarily disable set -e for the daemon loop so signal interruptions do not crash it
     set +e
 
     # Immediate transition on start
@@ -373,6 +519,7 @@ run_daemon() {
             if (( reload )); then
                 log_info "Received SIGHUP, reloading config..."
                 load_config
+                resolve_active_category
                 reload=0
                 break
             fi
@@ -392,7 +539,6 @@ run_daemon() {
         fi
     done
 
-    # Restore set -e
     set -e
 
     log_info "Daemon terminated gracefully."
@@ -430,6 +576,10 @@ parse_args() {
                 ACTION="list"
                 shift
                 ;;
+            --categories)
+                ACTION="categories"
+                shift
+                ;;
             -u|--undo)
                 ACTION="undo"
                 shift
@@ -454,10 +604,17 @@ parse_args() {
             -c|--category)
                 [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a category name."
                 CATEGORY="$2"
+                CLI_CATEGORY_PASSED=true
                 shift 2
                 ;;
             --category=*)
                 CATEGORY="${1#*=}"
+                CLI_CATEGORY_PASSED=true
+                shift
+                ;;
+            -a|--all)
+                CATEGORY="all"
+                CLI_CATEGORY_PASSED=true
                 shift
                 ;;
             -m|--mode)
@@ -505,6 +662,9 @@ parse_args() {
     if [[ ! "$INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
         die "Interval must be a positive integer in minutes, got: '$INTERVAL'."
     fi
+
+    # Determine and persist active category
+    resolve_active_category
 }
 
 # ------------------------------------------------------------------------------
@@ -518,15 +678,24 @@ main() {
             local current
             current="$(get_current_wallpaper)"
             if [[ -n "$current" ]]; then
-                printf "%s\n" "$current"
+                local cat_info="all"
+                if [[ -n "$CATEGORY" ]]; then
+                    cat_info="$CATEGORY"
+                fi
+                printf "%s ${C_CYAN}[Category: %s]${C_RESET}\n" "$current" "$cat_info"
             else
                 log_warn "No wallpaper currently set or detectable."
             fi
             ;;
+        categories)
+            list_categories
+            ;;
         list)
             local -a wallpapers=()
             readarray -t wallpapers < <(discover_wallpapers)
-            log_info "Discovered ${#wallpapers[@]} wallpaper(s):"
+            local target_dir
+            target_dir="$(resolve_target_dir)"
+            log_info "Discovered ${#wallpapers[@]} wallpaper(s) in $target_dir:"
             for wp in "${wallpapers[@]}"; do
                 printf "  • %s\n" "$wp"
             done

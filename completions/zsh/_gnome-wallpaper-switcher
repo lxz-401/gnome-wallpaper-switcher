@@ -30,6 +30,8 @@ _gnome_wallpaper_switcher() {
     _arguments -s \
         '(-m --mode)'{-m,--mode}'[Set switching mode]:mode:(($modes))' \
         '(-c --category)'{-c,--category}'[Target a specific wallpaper category]:category:($categories)' \
+        '(-a --all)'{-a,--all}'[Clear category filter and cycle across all wallpapers]' \
+        '--categories[List all available categories and show active status]' \
         '(-p --path)'{-p,--path}'[Override base wallpapers directory]:directory:_files -/' \
         '(-u --undo)'{-u,--undo}'[Roll back to the previous wallpaper in history]' \
         '(-d --daemon)'{-d,--daemon}'[Run in background as continuous daemon service]' \

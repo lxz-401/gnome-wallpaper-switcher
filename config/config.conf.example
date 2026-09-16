@@ -16,7 +16,9 @@ WALLPAPERS_DIR="$HOME/Pictures/Wallpapers"
 MODE="forward"
 
 # Default category to target (subfolder name inside WALLPAPERS_DIR).
-# Leave empty ("") to scan the entire WALLPAPERS_DIR recursively.
+# Leave empty ("") to scan all folders, or set a folder name (e.g. "anime", "dark").
+# Note: Selecting a category via CLI (-c <NAME>) will be remembered across runs
+# until cleared via (-a / --all).
 CATEGORY=""
 
 # Automatic switching interval in minutes when running in daemon mode.
