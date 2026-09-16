@@ -1,0 +1,45 @@
+#compdef gnome-wallpaper-switcher
+# ==============================================================================
+# Zsh Completion for gnome-wallpaper-switcher
+# ==============================================================================
+
+_gnome_wallpaper_switcher() {
+    local -a modes
+    modes=(
+        'forward:Switch to the next wallpaper in alphabetical order'
+        'backward:Switch to the previous wallpaper in reverse order'
+        'random:Switch to a pseudo-random wallpaper'
+    )
+
+    local -a categories
+    local wp_dir="$HOME/Pictures/Wallpapers"
+    local config_file="${XDG_CONFIG_HOME:-$HOME/.config}/gnome-wallpaper-switcher/config.conf"
+
+    if [[ -f "$config_file" ]]; then
+        local cfg_dir
+        cfg_dir=$(grep -E '^[[:space:]]*WALLPAPERS_DIR=' "$config_file" | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+        if [[ -n "$cfg_dir" ]]; then
+            wp_dir="$(eval echo "$cfg_dir")"
+        fi
+    fi
+
+    if [[ -d "$wp_dir" ]]; then
+        categories=(${${(f)"$(find "$wp_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null)"}})
+    fi
+
+    _arguments -s \
+        '(-m --mode)'{-m,--mode}'[Set switching mode]:mode:(($modes))' \
+        '(-c --category)'{-c,--category}'[Target a specific wallpaper category]:category:($categories)' \
+        '(-p --path)'{-p,--path}'[Override base wallpapers directory]:directory:_files -/' \
+        '(-u --undo)'{-u,--undo}'[Roll back to the previous wallpaper in history]' \
+        '(-d --daemon)'{-d,--daemon}'[Run in background as continuous daemon service]' \
+        '(-i --interval)'{-i,--interval}'[Interval in minutes for daemon mode]:interval (minutes):(5 10 15 30 60 120)' \
+        '(-s --current)'{-s,--current}'[Print path of currently active wallpaper]' \
+        '(-l --list)'{-l,--list}'[List discovered wallpapers in target directory]' \
+        '(-n --notify)'{-n,--notify}'[Send desktop notification on transition]' \
+        '--config[Path to configuration file]:config file:_files' \
+        '(-h --help)'{-h,--help}'[Display help message and exit]' \
+        '(-v --version)'{-v,--version}'[Show version information and exit]'
+}
+
+_gnome_wallpaper_switcher "$@"

@@ -1,0 +1,16 @@
+# Makepkg build artifacts
+/src/
+/pkg/
+*.pkg.tar.zst
+*.pkg.tar.xz
+*.log
+
+# Editor & temporary files
+*.swp
+*.tmp
+*~
+.DS_Store
+
+# Local test configurations / cache
+/config/config.conf
+/cache/

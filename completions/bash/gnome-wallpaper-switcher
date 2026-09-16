@@ -1,0 +1,67 @@
+# ==============================================================================
+# Bash Completion for gnome-wallpaper-switcher
+# ==============================================================================
+
+_gnome_wallpaper_switcher() {
+    local cur prev words cword
+    _init_completion || return
+
+    local opts="-m --mode -c --category -p --path -u --undo -d --daemon -i --interval -s --current -l --list -n --notify --config -h --help -v --version"
+
+    case "$prev" in
+        -m|--mode)
+            COMPREPLY=( $(compgen -W "forward backward random" -- "$cur") )
+            return 0
+            ;;
+        -p|--path)
+            COMPREPLY=( $(compgen -d -- "$cur") )
+            return 0
+            ;;
+        --config)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
+        -c|--category)
+            local wp_dir="$HOME/Pictures/Wallpapers"
+            local config_file="${XDG_CONFIG_HOME:-$HOME/.config}/gnome-wallpaper-switcher/config.conf"
+
+            # Check if custom path was specified earlier in the command line
+            local i
+            for (( i=1; i < cword; i++ )); do
+                if [[ "${words[i]}" == "-p" || "${words[i]}" == "--path" ]]; then
+                    wp_dir="${words[i+1]}"
+                    break
+                elif [[ "${words[i]}" == --path=* ]]; then
+                    wp_dir="${words[i]#*=}"
+                    break
+                fi
+            done
+
+            if [[ -f "$config_file" && "$wp_dir" == "$HOME/Pictures/Wallpapers" ]]; then
+                local cfg_dir
+                cfg_dir=$(grep -E '^[[:space:]]*WALLPAPERS_DIR=' "$config_file" | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+                if [[ -n "$cfg_dir" ]]; then
+                    wp_dir="$(eval echo "$cfg_dir")"
+                fi
+            fi
+
+            if [[ -d "$wp_dir" ]]; then
+                local categories
+                categories=$(find "$wp_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$categories" -- "$cur") )
+            fi
+            return 0
+            ;;
+        -i|--interval)
+            COMPREPLY=( $(compgen -W "5 10 15 30 60 120" -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return 0
+    fi
+}
+
+complete -F _gnome_wallpaper_switcher gnome-wallpaper-switcher

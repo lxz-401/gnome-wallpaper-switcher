@@ -1,0 +1,546 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# gnome-wallpaper-switcher
+#
+# A modular CLI utility and background daemon for automated wallpaper transitions
+# on Arch Linux running GNOME.
+# ==============================================================================
+
+set -eo pipefail
+
+readonly PROGRAM_NAME="gnome-wallpaper-switcher"
+readonly VERSION="1.0.0"
+
+# ------------------------------------------------------------------------------
+# Default Paths & Configuration
+# ------------------------------------------------------------------------------
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gnome-wallpaper-switcher"
+CONFIG_FILE="$CONFIG_DIR/config.conf"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-wallpaper-switcher"
+HISTORY_FILE="$CACHE_DIR/history"
+
+# Configurable defaults
+WALLPAPERS_DIR="$HOME/Pictures/Wallpapers"
+MODE="forward"
+CATEGORY=""
+INTERVAL=15
+NOTIFY=false
+ACTION="switch" # switch, undo, daemon, current, list
+
+# Terminal color formatting
+if [[ -t 1 ]]; then
+    C_RESET=$'\033[0m'
+    C_BOLD=$'\033[1m'
+    C_GREEN=$'\033[32m'
+    C_BLUE=$'\033[34m'
+    C_YELLOW=$'\033[33m'
+    C_RED=$'\033[31m'
+    C_CYAN=$'\033[36m'
+else
+    C_RESET=""
+    C_BOLD=""
+    C_GREEN=""
+    C_BLUE=""
+    C_YELLOW=""
+    C_RED=""
+    C_CYAN=""
+fi
+
+# ------------------------------------------------------------------------------
+# Logging & Helper Functions
+# ------------------------------------------------------------------------------
+log_info() {
+    printf "${C_BLUE}::${C_RESET} %s\n" "$*"
+}
+
+log_success() {
+    printf "${C_GREEN}✓${C_RESET} %s\n" "$*"
+}
+
+log_warn() {
+    printf "${C_YELLOW}!${C_RESET} %s\n" "$*" >&2
+}
+
+log_error() {
+    printf "${C_RED}✗ Error:${C_RESET} %s\n" "$*" >&2
+}
+
+die() {
+    log_error "$*"
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# Configuration Loading
+# ------------------------------------------------------------------------------
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # shellcheck disable=SC1090
+        source "$CONFIG_FILE"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Help & Version Output
+# ------------------------------------------------------------------------------
+show_version() {
+    printf "%s %s\n" "$PROGRAM_NAME" "$VERSION"
+}
+
+show_help() {
+    cat <<EOF
+${C_BOLD}${PROGRAM_NAME}${C_RESET} - Modular GNOME Desktop Wallpaper Switcher (v${VERSION})
+
+${C_BOLD}USAGE:${C_RESET}
+    ${PROGRAM_NAME} [OPTIONS]
+
+${C_BOLD}OPTIONS:${C_RESET}
+    -m, --mode <MODE>          Switching mode: 'forward', 'backward', 'random' (default: forward)
+    -c, --category <NAME>      Target a specific subfolder inside the wallpapers directory
+    -p, --path <DIR>           Override base wallpapers directory (default: ~/Pictures/Wallpapers)
+    -u, --undo                 Restore the previous wallpaper from history
+    -d, --daemon               Run in the background as a continuous cycling service
+    -i, --interval <MINUTES>   Cycle interval in minutes for daemon mode (default: 15)
+    -s, --current              Print path of currently active wallpaper
+    -l, --list                 List discovered wallpapers in target folder
+    -n, --notify               Send a desktop notification on wallpaper transition
+    --config <FILE>            Use custom configuration file
+    -h, --help                 Display this help message and exit
+    -v, --version              Show version information
+
+${C_BOLD}CONFIGURATION & CACHE:${C_RESET}
+    Config file:   ${CONFIG_FILE}
+    History cache: ${HISTORY_FILE}
+
+${C_BOLD}SIGNALS (Daemon Mode):${C_RESET}
+    SIGUSR1: Force immediate transition to the next wallpaper
+    SIGHUP:  Reload configuration file
+    SIGTERM: Graceful shutdown
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# URI Encoding / Decoding Utilities
+# ------------------------------------------------------------------------------
+to_file_uri() {
+    local raw_path="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "import urllib.parse, sys; print('file://' + urllib.parse.quote(sys.argv[1]))" "$raw_path"
+    else
+        # Fallback: encode spaces
+        printf "file://%s\n" "${raw_path// /%20}"
+    fi
+}
+
+from_file_uri() {
+    local raw_uri="$1"
+    # Remove surrounding quotes and file:// prefix
+    raw_uri="${raw_uri#\'}"
+    raw_uri="${raw_uri%\'}"
+    raw_uri="${raw_uri#file://}"
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "import urllib.parse, sys; print(urllib.parse.unquote(sys.argv[1]))" "$raw_uri"
+    else
+        local s="${raw_uri//+/ }"
+        printf '%b\n' "${s//%/\\x}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Notification Helper
+# ------------------------------------------------------------------------------
+send_notification() {
+    local wp_path="$1"
+    if [[ "$NOTIFY" == "true" ]] && command -v notify-send >/dev/null 2>&1; then
+        local name
+        name="$(basename "$wp_path")"
+        notify-send \
+            --app-name="GNOME Wallpaper Switcher" \
+            --icon="$wp_path" \
+            "Wallpaper Changed" \
+            "$name" 2>/dev/null || true
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Desktop Background Manipulation via GSettings
+# ------------------------------------------------------------------------------
+get_current_wallpaper() {
+    if ! command -v gsettings >/dev/null 2>&1; then
+        die "gsettings not found. This utility requires GNOME desktop."
+    fi
+
+    local raw_uri
+    raw_uri=$(gsettings get org.gnome.desktop.background picture-uri-dark 2>/dev/null || true)
+    if [[ -z "$raw_uri" || "$raw_uri" == "''" ]]; then
+        raw_uri=$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null || true)
+    fi
+
+    from_file_uri "$raw_uri"
+}
+
+apply_wallpaper() {
+    local target_file="$1"
+    if [[ ! -f "$target_file" ]]; then
+        die "Target wallpaper does not exist: $target_file"
+    fi
+
+    local file_uri
+    file_uri=$(to_file_uri "$target_file")
+
+    gsettings set org.gnome.desktop.background picture-uri "$file_uri"
+    gsettings set org.gnome.desktop.background picture-uri-dark "$file_uri"
+}
+
+# ------------------------------------------------------------------------------
+# History & Undo Cache
+# ------------------------------------------------------------------------------
+record_history() {
+    local wp="$1"
+    mkdir -p "$CACHE_DIR"
+
+    # Avoid duplicate consecutive entries
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local last_wp
+        last_wp=$(tail -n 1 "$HISTORY_FILE" 2>/dev/null || true)
+        if [[ "$last_wp" == "$wp" ]]; then
+            return 0
+        fi
+    fi
+
+    printf '%s\n' "$wp" >> "$HISTORY_FILE"
+
+    # Maintain a rolling window of 50 items
+    if [[ -f "$HISTORY_FILE" ]]; then
+        tail -n 50 "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+    fi
+}
+
+undo_wallpaper() {
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        die "History cache does not exist. Cannot perform undo."
+    fi
+
+    local lines
+    lines=$(wc -l < "$HISTORY_FILE")
+    if [[ "$lines" -lt 2 ]]; then
+        die "History is empty or has only one entry. No previous wallpaper to restore."
+    fi
+
+    # Retrieve second to last wallpaper
+    local prev_wp
+    prev_wp=$(tail -n 2 "$HISTORY_FILE" | head -n 1)
+
+    # Pop the last entry
+    sed -i '$d' "$HISTORY_FILE"
+
+    if [[ ! -f "$prev_wp" ]]; then
+        die "Previous wallpaper recorded in history no longer exists: $prev_wp"
+    fi
+
+    apply_wallpaper "$prev_wp"
+    send_notification "$prev_wp"
+    log_success "Rolled back to: $prev_wp"
+}
+
+# ------------------------------------------------------------------------------
+# Directory Scanning & Wallpaper Discovery
+# ------------------------------------------------------------------------------
+resolve_target_dir() {
+    local target="$WALLPAPERS_DIR"
+    if [[ -n "$CATEGORY" ]]; then
+        target="$WALLPAPERS_DIR/$CATEGORY"
+    fi
+    printf "%s" "$target"
+}
+
+discover_wallpapers() {
+    local target_dir
+    target_dir="$(resolve_target_dir)"
+
+    if [[ ! -d "$target_dir" ]]; then
+        die "Target wallpaper directory does not exist: $target_dir"
+    fi
+
+    local -a files=()
+    readarray -t files < <(
+        find "$target_dir" -type f \( \
+            -iname "*.jpg"  -o \
+            -iname "*.jpeg" -o \
+            -iname "*.png"  -o \
+            -iname "*.webp" -o \
+            -iname "*.jxl"  -o \
+            -iname "*.svg"  -o \
+            -iname "*.bmp" \
+        \) | sort -V
+    )
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        die "No supported image files found in: $target_dir"
+    fi
+
+    printf '%s\n' "${files[@]}"
+}
+
+# ------------------------------------------------------------------------------
+# Core Switching Logic
+# ------------------------------------------------------------------------------
+change_wallpaper() {
+    local -a wallpapers=()
+    readarray -t wallpapers < <(discover_wallpapers)
+    local count=${#wallpapers[@]}
+
+    local current_path
+    current_path="$(get_current_wallpaper)"
+
+    local current_index=-1
+    for i in "${!wallpapers[@]}"; do
+        if [[ "${wallpapers[$i]}" == "$current_path" ]]; then
+            current_index=$i
+            break
+        fi
+    done
+
+    local next_index=0
+    case "$MODE" in
+        forward)
+            if [[ $current_index -ge 0 ]]; then
+                next_index=$(( (current_index + 1) % count ))
+            else
+                next_index=0
+            fi
+            ;;
+        backward)
+            if [[ $current_index -ge 0 ]]; then
+                next_index=$(( (current_index - 1 + count) % count ))
+            else
+                next_index=$(( count - 1 ))
+            fi
+            ;;
+        random)
+            next_index=$(( RANDOM % count ))
+            if (( count > 1 && current_index >= 0 )); then
+                local attempts=0
+                while (( next_index == current_index && attempts < 10 )); do
+                    next_index=$(( RANDOM % count ))
+                    (( attempts++ ))
+                done
+            fi
+            ;;
+        *)
+            die "Invalid mode '$MODE'. Supported modes: forward, backward, random."
+            ;;
+    esac
+
+    local next_wp="${wallpapers[$next_index]}"
+
+    apply_wallpaper "$next_wp"
+    record_history "$next_wp"
+    send_notification "$next_wp"
+    log_success "Set: $next_wp"
+}
+
+# ------------------------------------------------------------------------------
+# Daemon Loop & Signal Traps
+# ------------------------------------------------------------------------------
+run_daemon() {
+    local target_dir
+    target_dir="$(resolve_target_dir)"
+    log_info "Starting daemon loop"
+    log_info "Directory: $target_dir | Category: ${CATEGORY:-none} | Interval: ${INTERVAL}m | Mode: $MODE"
+
+    local running=1
+    local reload=0
+    local force_switch=0
+
+    # Trap signals cleanly
+    trap 'running=0' SIGINT SIGTERM
+    trap 'reload=1' SIGHUP
+    trap 'force_switch=1' SIGUSR1
+
+    # Temporarily disable set -e for the daemon loop so signal interruptions do not crash it
+    set +e
+
+    # Immediate transition on start
+    change_wallpaper
+
+    while (( running )); do
+        local sleep_seconds=$(( INTERVAL * 60 ))
+        local elapsed=0
+
+        while (( elapsed < sleep_seconds && running )); do
+            if (( reload )); then
+                log_info "Received SIGHUP, reloading config..."
+                load_config
+                reload=0
+                break
+            fi
+
+            if (( force_switch )); then
+                log_info "Received SIGUSR1, triggering immediate transition..."
+                force_switch=0
+                break
+            fi
+
+            sleep 1 || true
+            (( elapsed++ ))
+        done
+
+        if (( running )); then
+            change_wallpaper
+        fi
+    done
+
+    # Restore set -e
+    set -e
+
+    log_info "Daemon terminated gracefully."
+}
+
+# ------------------------------------------------------------------------------
+# Argument Parsing
+# ------------------------------------------------------------------------------
+parse_args() {
+    # First pass: check for custom config file if specified
+    for arg in "$@"; do
+        if [[ "$arg" == "--config="* ]]; then
+            CONFIG_FILE="${arg#*=}"
+        fi
+    done
+
+    # Load configuration prior to parsing overriding flags
+    load_config
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -v|--version)
+                show_version
+                exit 0
+                ;;
+            -s|--current)
+                ACTION="current"
+                shift
+                ;;
+            -l|--list)
+                ACTION="list"
+                shift
+                ;;
+            -u|--undo)
+                ACTION="undo"
+                shift
+                ;;
+            -d|--daemon)
+                ACTION="daemon"
+                shift
+                ;;
+            -n|--notify)
+                NOTIFY="true"
+                shift
+                ;;
+            -p|--path)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a directory path."
+                WALLPAPERS_DIR="$2"
+                shift 2
+                ;;
+            --path=*)
+                WALLPAPERS_DIR="${1#*=}"
+                shift
+                ;;
+            -c|--category)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a category name."
+                CATEGORY="$2"
+                shift 2
+                ;;
+            --category=*)
+                CATEGORY="${1#*=}"
+                shift
+                ;;
+            -m|--mode)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a mode: forward, backward, random."
+                MODE="$2"
+                shift 2
+                ;;
+            --mode=*)
+                MODE="${1#*=}"
+                shift
+                ;;
+            -i|--interval)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a numeric interval in minutes."
+                INTERVAL="$2"
+                shift 2
+                ;;
+            --interval=*)
+                INTERVAL="${1#*=}"
+                shift
+                ;;
+            --config)
+                [[ -z "${2:-}" || "$2" == -* ]] && die "Option $1 requires a config file path."
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            --config=*)
+                CONFIG_FILE="${1#*=}"
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                die "Unknown option: $1. Use --help to view available options."
+                ;;
+        esac
+    done
+
+    # Validation
+    if [[ ! "$MODE" =~ ^(forward|backward|random)$ ]]; then
+        die "Invalid mode '$MODE'. Expected: 'forward', 'backward', or 'random'."
+    fi
+
+    if [[ ! "$INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
+        die "Interval must be a positive integer in minutes, got: '$INTERVAL'."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Entrypoint Execution
+# ------------------------------------------------------------------------------
+main() {
+    parse_args "$@"
+
+    case "$ACTION" in
+        current)
+            local current
+            current="$(get_current_wallpaper)"
+            if [[ -n "$current" ]]; then
+                printf "%s\n" "$current"
+            else
+                log_warn "No wallpaper currently set or detectable."
+            fi
+            ;;
+        list)
+            local -a wallpapers=()
+            readarray -t wallpapers < <(discover_wallpapers)
+            log_info "Discovered ${#wallpapers[@]} wallpaper(s):"
+            for wp in "${wallpapers[@]}"; do
+                printf "  • %s\n" "$wp"
+            done
+            ;;
+        undo)
+            undo_wallpaper
+            ;;
+        daemon)
+            run_daemon
+            ;;
+        switch)
+            change_wallpaper
+            ;;
+    esac
+}
+
+main "$@"
